@@ -1,0 +1,49 @@
+name: Scheduled Task
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: worker-runner
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install deps
+        run: pip install requests -q
+
+      - name: Run worker (10 min max)
+        env:
+          REGISTER_URL: ${{ secrets.REGISTER_URL }}
+          OUTPUT_FILE: ${{ secrets.OUTPUT_FILE }}
+          MAX_RUNTIME: "580"
+          MAX_WORKERS: "25"
+        timeout-minutes: 11
+        run: |
+          echo "${{ secrets.WORKER_SCRIPT }}" | base64 -d > /tmp/worker.py
+          python3 /tmp/worker.py
+
+      - name: Commit results
+        run: |
+          FILE="${{ secrets.OUTPUT_FILE }}"
+          if [ -f "$FILE" ] && [ -s "$FILE" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add "$FILE"
+            git diff --cached --quiet || git commit -m "update $(date -u +%Y-%m-%d_%H:%M)"
+            git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git main
+          fi
